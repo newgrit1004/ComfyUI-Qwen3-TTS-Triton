@@ -1,6 +1,6 @@
 # ComfyUI-Qwen3-TTS-Triton
 
-**Fast Qwen3-TTS for ComfyUI** — single node wrapping [qwen3-tts-triton](https://github.com/newgrit1004/qwen3-tts-triton) with Triton kernel fusion, CUDA Graph capture, and TurboQuant KV cache. **Up to 5.0× faster** than the unoptimised baseline on RTX 5090.
+**Fast Qwen3-TTS for ComfyUI** — two nodes (Custom Voice + Voice Clone) wrapping [qwen3-tts-triton](https://github.com/newgrit1004/qwen3-tts-triton) with Triton kernel fusion, CUDA Graph capture, and TurboQuant KV cache. **Up to 5.0× faster** than the unoptimised baseline on RTX 5090.
 
 [![Qwen3-TTS Model](https://img.shields.io/badge/%F0%9F%A4%97%20Model-Qwen3--TTS--12Hz--1.7B-blue)](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice)
 [![Upstream](https://img.shields.io/badge/GitHub-qwen3--tts--triton-black)](https://github.com/newgrit1004/qwen3-tts-triton)
