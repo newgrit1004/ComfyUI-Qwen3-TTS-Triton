@@ -1,0 +1,1 @@
+qwen3-tts-triton>=0.2.0

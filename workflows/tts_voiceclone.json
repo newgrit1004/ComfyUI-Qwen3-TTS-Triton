@@ -1,0 +1,30 @@
+{
+  "1": {
+    "class_type": "LoadAudio",
+    "inputs": {
+      "audio": "reference_voice.wav"
+    }
+  },
+  "2": {
+    "class_type": "Qwen3TTSVoiceClone",
+    "inputs": {
+      "text": "Hello, this is a Qwen3 Triton TTS voice clone test.",
+      "ref_audio": [
+        "1",
+        0
+      ],
+      "runner_mode": "hybrid",
+      "language": "english"
+    }
+  },
+  "3": {
+    "class_type": "SaveAudio",
+    "inputs": {
+      "audio": [
+        "2",
+        0
+      ],
+      "filename_prefix": "qwen3_tts_voiceclone"
+    }
+  }
+}

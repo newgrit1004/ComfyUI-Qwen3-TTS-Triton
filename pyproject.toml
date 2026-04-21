@@ -1,0 +1,15 @@
+[project]
+name = "comfyui-qwen3-tts-triton"
+description = "ComfyUI node wrapping qwen3-tts-triton for 7-mode Qwen3-TTS inference (Triton kernel fusion + TurboQuant KV cache)"
+version = "0.2.0"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.12"
+dependencies = ["qwen3-tts-triton>=0.2.0"]
+
+[project.urls]
+Repository = "https://github.com/newgrit1004/ComfyUI-Qwen3-TTS-Triton"
+
+[tool.comfy]
+PublisherId = "newgrit1004"
+DisplayName = "Qwen3 Triton TTS"
+Icon = ""

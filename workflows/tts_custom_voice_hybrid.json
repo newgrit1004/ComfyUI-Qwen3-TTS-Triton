@@ -1,0 +1,21 @@
+{
+  "1": {
+    "class_type": "Qwen3TTSCustomVoice",
+    "inputs": {
+      "text": "Hello, this is a Qwen3 Triton TTS hybrid mode test.",
+      "runner_mode": "hybrid",
+      "language": "english",
+      "speaker": "vivian"
+    }
+  },
+  "2": {
+    "class_type": "SaveAudio",
+    "inputs": {
+      "audio": [
+        "1",
+        0
+      ],
+      "filename_prefix": "qwen3_tts_hybrid"
+    }
+  }
+}

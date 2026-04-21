@@ -1,0 +1,39 @@
+# Custom
+scripts/*
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# Environments
+.venv/
+.env
+.local-test/
+
+# IDE
+.idea/
+.vscode/
+pyrightconfig.json
+
+# Claude Code
+.claude/plans/
+.codex
+.omc/
+
+# Old template tools
+.skylos/
+.sisyphus
+.complexipy_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Vendored PyPI install (node uses --target vendor/ for isolation; not shipped)
+vendor/
+
+# Benchmark artifacts
+benchmark/comfyui/*.safetensors
+
+# Misc
+*.log
