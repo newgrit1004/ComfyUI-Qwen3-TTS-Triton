@@ -37,3 +37,6 @@ benchmark/comfyui/*.safetensors
 
 # Misc
 *.log
+
+# comfy-cli publish staging artifact
+node.zip
