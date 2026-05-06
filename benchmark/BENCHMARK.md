@@ -1,7 +1,13 @@
 # ComfyUI-Qwen3-TTS-Triton Benchmark
 
-End-to-end benchmark of `Qwen3TTSCustomVoice` measured through the ComfyUI HTTP API
+Legacy 1.7B end-to-end benchmark of `Qwen3TTSCustomVoice` measured through the ComfyUI HTTP API
 (`POST /prompt` → poll `/history`).
+
+The node defaults now target Qwen3-TTS 0.6B checkpoints:
+`Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` for Custom Voice and
+`Qwen/Qwen3-TTS-12Hz-0.6B-Base` for Voice Clone. The numbers below are kept as
+historical reference for the original 1.7B setup and should not be read as
+0.6B measurements.
 
 ## Method
 
@@ -26,7 +32,7 @@ End-to-end benchmark of `Qwen3TTSCustomVoice` measured through the ComfyUI HTTP 
 | transformers | 4.57.3 |
 | Python | 3.12.3 (isolated `.local-test/venv312/`) |
 | ComfyUI | 0.19.3 — launched with `--disable-cuda-malloc` |
-| Model | `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` (bf16) |
+| Model | `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` (bf16, legacy benchmark) |
 | Text | Korean short utterance (~40 chars) |
 | `max_new_tokens` | 512 |
 | Runner cache | one warm runner per `(mode, model_id, dtype, device, tq_bits)` |

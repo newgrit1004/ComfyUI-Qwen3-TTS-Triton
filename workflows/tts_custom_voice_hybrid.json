@@ -5,7 +5,7 @@
       "text": "Hello, this is a Qwen3 Triton TTS hybrid mode test.",
       "runner_mode": "hybrid",
       "language": "english",
-      "speaker": "vivian"
+      "speaker": "Vivian"
     }
   },
   "2": {
