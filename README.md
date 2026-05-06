@@ -1,8 +1,9 @@
 # ComfyUI-Qwen3-TTS-Triton
 
-**Fast Qwen3-TTS for ComfyUI** — two nodes (Custom Voice + Voice Clone) wrapping [qwen3-tts-triton](https://github.com/newgrit1004/qwen3-tts-triton) with Triton kernel fusion, CUDA Graph capture, and TurboQuant KV cache. **Up to 5.0× faster** than the unoptimised baseline on RTX 5090.
+**Fast Qwen3-TTS for ComfyUI** — two nodes (Custom Voice + Voice Clone) wrapping [qwen3-tts-triton](https://github.com/newgrit1004/qwen3-tts-triton) with Triton kernel fusion, CUDA Graph capture, and TurboQuant KV cache. Defaults target Qwen3-TTS 0.6B checkpoints while keeping the same optimized runner modes.
 
-[![Qwen3-TTS Model](https://img.shields.io/badge/%F0%9F%A4%97%20Model-Qwen3--TTS--12Hz--1.7B-blue)](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice)
+[![Qwen3-TTS CustomVoice](https://img.shields.io/badge/%F0%9F%A4%97%20CustomVoice-Qwen3--TTS--12Hz--0.6B-blue)](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice)
+[![Qwen3-TTS Base](https://img.shields.io/badge/%F0%9F%A4%97%20VoiceClone-Qwen3--TTS--12Hz--0.6B--Base-blue)](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base)
 [![Upstream](https://img.shields.io/badge/GitHub-qwen3--tts--triton-black)](https://github.com/newgrit1004/qwen3-tts-triton)
 [![Sibling](https://img.shields.io/badge/Sibling-ComfyUI--Omnivoice--Triton-black)](https://github.com/newgrit1004/ComfyUI-Omnivoice-Triton)
 [![Sibling](https://img.shields.io/badge/Sibling-ComfyUI--ZImage--Triton-black)](https://github.com/newgrit1004/ComfyUI-ZImage-Triton)
@@ -12,7 +13,8 @@
 
 ## Features
 
-- **~5.0× end-to-end speedup** — `hybrid` (Triton + CUDA Graph) vs unoptimised `base` on Qwen3-TTS 1.7B (RTX 5090, bf16). See [`benchmark/BENCHMARK.md`](benchmark/BENCHMARK.md).
+- **0.6B task-correct defaults** — Custom Voice uses `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`; Voice Clone uses `Qwen/Qwen3-TTS-12Hz-0.6B-Base`.
+- **Same optimization controls** — `hybrid` (Triton + CUDA Graph), `+tq` TurboQuant KV cache, and the unoptimized reference modes remain exposed through the same UI.
 - **7 runner modes** — `base`, `triton`, `faster`, `hybrid`, plus **TurboQuant KV cache** variants `base+tq`, `triton+tq`, `hybrid+tq` (INT4 KV, ~4× memory reduction).
 - **Two dedicated nodes** — `Qwen3TTSCustomVoice` (speaker + instruct) and `Qwen3TTSVoiceClone` (reference AUDIO + optional transcript) — minimal required inputs, advanced params in optional.
 - **Warm runner cache** keyed by `(runner_mode, model_id, dtype, device, tq_bits)` — no redundant `load_model()` calls between runs with the same config.
@@ -77,7 +79,9 @@ If you want to develop against a local `qwen3-tts-triton` checkout instead of th
 export COMFYUI_QWEN3_TTS_TRITON_SRC=/path/to/qwen3-tts-triton
 ```
 
-The env var can point at the repo root or its `src/` directory. The node prepends that path to `sys.path` before importing `qwen3_tts_triton`.
+The env var can point at the repo root or its `src/` directory. When set, the node prepends that path to `sys.path` before importing `qwen3_tts_triton`, even if a PyPI wheel is already installed.
+
+This is required when using a patched upstream checkout for exact 0.6B optimization parity. The public `qwen3-tts-triton` v0.2.0 package documents 1.7B-optimized kernels; 0.6B optimized modes require upstream kernels/cache code that derive dimensions from the loaded model instead of assuming the 1.7B talker shape.
 
 ## Nodes
 
@@ -91,14 +95,16 @@ The env var can point at the repo root or its `src/` directory. The node prepend
 | `text` | STRING, multiline | sample | Text to synthesize. |
 | `runner_mode` | enum | `hybrid` | `base`, `base+tq`, `triton`, `triton+tq`, `faster`, `hybrid`, `hybrid+tq`. |
 | `language` | STRING | `English` | Language name passed to the upstream runner. |
-| `speaker` | STRING | `vivian` | Speaker id. |
+| `speaker` | enum | `Vivian` | Official 0.6B CustomVoice preset speaker. |
+
+Supported speakers for `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice`: `Vivian`, `Serena`, `Uncle_Fu`, `Dylan`, `Eric`, `Ryan`, `Aiden`, `Ono_Anna`, `Sohee`.
 
 **Optional inputs** (advanced — defaults work for most cases):
 
 | Parameter | Default | Description |
 |---|---|---|
 | `instruct` | empty | Style instruction string. |
-| `model_id` | `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` | HuggingFace id or local path. |
+| `model_id` | `Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice` | HuggingFace id or local path. |
 | `dtype` | `bf16` | `bf16`, `fp16`, `fp32`. |
 | `device` | `cuda` | CUDA only. |
 | `tq_bits` | 4 | TurboQuant bits for `+tq` modes (3 or 4). |
@@ -130,7 +136,7 @@ The env var can point at the repo root or its `src/` directory. The node prepend
 |---|---|---|
 | `ref_text` | empty | Transcript of `ref_audio` (improves accuracy). |
 | `xvec_only` | True | Use x-vector-only mode (skip audio token path). |
-| `model_id` | `Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice` | HuggingFace id or local path. |
+| `model_id` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | HuggingFace id or local path. |
 | `dtype` | `bf16` | `bf16`, `fp16`, `fp32`. |
 | `device` | `cuda` | CUDA only. |
 | `tq_bits` | 4 | TurboQuant bits for `+tq` modes. |
@@ -191,7 +197,7 @@ For other runner modes, load any workflow and change the `runner_mode` widget.
 
 ## Benchmark
 
-Upstream v0.2.0 headline numbers (RTX 5090, cited — not measured at the ComfyUI layer):
+Legacy upstream v0.2.0 headline numbers for 1.7B (RTX 5090, cited — not measured at the ComfyUI layer):
 
 | mode | gen speedup vs base |
 |------|---:|
@@ -206,7 +212,8 @@ Full table + caveats: [`benchmark/BENCHMARK.md`](benchmark/BENCHMARK.md).
 ## References
 
 - **Wrapped package:** [qwen3-tts-triton](https://github.com/newgrit1004/qwen3-tts-triton)
-- **Upstream model:** [Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice)
+- **Default Custom Voice model:** [Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice)
+- **Default Voice Clone model:** [Qwen/Qwen3-TTS-12Hz-0.6B-Base](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-Base)
 - **Sibling Triton-accelerated nodes:**
   - [ComfyUI-Omnivoice-Triton](https://github.com/newgrit1004/ComfyUI-Omnivoice-Triton)
   - [ComfyUI-ZImage-Triton](https://github.com/newgrit1004/ComfyUI-ZImage-Triton)

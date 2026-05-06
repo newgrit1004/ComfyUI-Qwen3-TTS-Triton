@@ -33,18 +33,17 @@ def _resolve_sideload_dir(raw_path: str) -> str:
 
 def _sideload_source_if_needed() -> None:
     """Allow pre-PyPI development against a local qwen3-tts-triton checkout."""
-    try:
-        import qwen3_tts_triton  # noqa: F401
-
-        return
-    except ImportError:
-        pass
-
     raw_path = os.environ.get("COMFYUI_QWEN3_TTS_TRITON_SRC", "")
     src_dir = _resolve_sideload_dir(raw_path)
     if src_dir and src_dir not in sys.path:
         sys.path.insert(0, src_dir)
         logger.info("[ComfyUI-Qwen3-TTS-Triton] sideloaded qwen3_tts_triton from %s", src_dir)
+        return
+
+    try:
+        import qwen3_tts_triton  # noqa: F401
+    except ImportError:
+        pass
 
 
 _add_vendor_dir_if_present()

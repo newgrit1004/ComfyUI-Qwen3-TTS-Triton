@@ -18,6 +18,47 @@ import sys as _sys
 if _sys.version_info < (3, 12):
     os.environ.setdefault("NUMBA_DISABLE_JIT", "1")
 
+
+def _patch_transformers_check_model_inputs() -> None:
+    """Let qwen-tts use @check_model_inputs() with newer transformers."""
+    try:
+        from transformers.utils import generic as transformers_generic
+    except Exception:  # noqa: BLE001
+        return
+
+    original = getattr(transformers_generic, "check_model_inputs", None)
+    if original is None or getattr(original, "_qwen3_tts_triton_compat", False):
+        return
+
+    try:
+        signature = inspect.signature(original)
+    except (TypeError, ValueError):
+        return
+
+    parameters = list(signature.parameters.values())
+    if not parameters:
+        return
+
+    first_parameter = parameters[0]
+    first_required = (
+        first_parameter.default is inspect.Parameter.empty
+        and first_parameter.kind
+        in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+    )
+    if not first_required:
+        return
+
+    def check_model_inputs_compat(func: Any | None = None) -> Any:
+        if func is None:
+            return original
+        return original(func)
+
+    check_model_inputs_compat._qwen3_tts_triton_compat = True  # type: ignore[attr-defined]
+    transformers_generic.check_model_inputs = check_model_inputs_compat
+
+
+_patch_transformers_check_model_inputs()
+
 try:
     from qwen3_tts_triton import ALL_RUNNER_NAMES, create_runner
 
@@ -37,7 +78,19 @@ except ImportError as exc:
 
 _DTYPE_CHOICES = ["bf16", "fp16", "fp32"]
 _DEVICE_CHOICES = ["cuda"]
-_DEFAULT_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice"
+_DEFAULT_CUSTOM_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice"
+_DEFAULT_CLONE_MODEL_ID = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+_CUSTOM_VOICE_SPEAKERS = [
+    "Vivian",
+    "Serena",
+    "Uncle_Fu",
+    "Dylan",
+    "Eric",
+    "Ryan",
+    "Aiden",
+    "Ono_Anna",
+    "Sohee",
+]
 _LANGUAGE_CHOICES = [
     "auto",
     "english",
@@ -54,6 +107,107 @@ _LANGUAGE_CHOICES = [
 
 _runner_cache: dict[tuple[str, str, str, str, int], Any] = {}
 _cache_lock = threading.Lock()
+_TRITON_COMPAT_PATCHED = False
+
+
+def _patch_qwen3_tts_triton_06b_compat() -> None:
+    """Patch upstream 0.2.0 shape assumptions that break 0.6B +TQ modes."""
+    global _TRITON_COMPAT_PATCHED
+    if _TRITON_COMPAT_PATCHED:
+        return
+
+    try:
+        import torch
+        from qwen3_tts_triton.kernels.turboquant import TurboQuantKVCache
+        from qwen3_tts_triton.models.base_runner import BaseRunner
+        from qwen3_tts_triton.models.patching import find_patchable_model
+        from qwen3_tts_triton.models.triton_faster_runner import TritonFasterRunner
+    except Exception:  # noqa: BLE001
+        return
+
+    def _head_dim(config: Any) -> int:
+        return int(
+            getattr(
+                config,
+                "head_dim",
+                getattr(config, "hidden_size") // getattr(config, "num_attention_heads"),
+            )
+        )
+
+    def _base_turboquant(self: Any) -> None:
+        config = self._tts.model.talker.config
+        self._tq_cache = TurboQuantKVCache(
+            bits=self.tq_bits,
+            num_layers=config.num_hidden_layers,
+            num_kv_heads=config.num_key_value_heads,
+            head_dim=_head_dim(config),
+            device=self.device,
+            dtype=self.dtype,
+        )
+
+        talker = self._tts.model.talker
+        original_generate = talker.generate
+        tq_cache = self._tq_cache
+
+        def _tq_generate(*args: Any, **kwargs: Any) -> Any:
+            tq_cache.reset()
+            kwargs.setdefault("past_key_values", tq_cache)
+            return original_generate(*args, **kwargs)
+
+        talker.generate = _tq_generate
+        logger.info(
+            "TurboQuant %d-bit KV cache injected into talker.generate()",
+            self.tq_bits,
+        )
+
+    def _hybrid_turboquant(self: Any) -> None:
+        internal = find_patchable_model(self.model.model)
+        talker = getattr(internal, "talker", internal)
+        config = getattr(talker, "config")
+
+        self._tq_cache = TurboQuantKVCache(
+            bits=self.tq_bits,
+            num_layers=getattr(config, "num_hidden_layers"),
+            num_kv_heads=getattr(config, "num_key_value_heads"),
+            head_dim=_head_dim(config),
+            device=self.device,
+            dtype=getattr(self, "dtype", torch.bfloat16),
+        )
+
+        original_generate = getattr(talker, "generate")
+        tq_cache = self._tq_cache
+
+        def _tq_generate(*args: Any, **kwargs: Any) -> Any:
+            tq_cache.reset()
+            kwargs.setdefault("past_key_values", tq_cache)
+            return original_generate(*args, **kwargs)
+
+        setattr(talker, "generate", _tq_generate)
+        logger.info("TurboQuant %d-bit KV cache injected (hybrid)", self.tq_bits)
+
+    BaseRunner._init_turboquant_cache = _base_turboquant
+    TritonFasterRunner._init_turboquant_hybrid = _hybrid_turboquant
+    _TRITON_COMPAT_PATCHED = True
+
+
+def _is_qwen3_tts_06b(model_id: str) -> bool:
+    return "Qwen3-TTS-12Hz-0.6B" in model_id
+
+
+def _is_qwen3_tts_base_model(model_id: str) -> bool:
+    return "Qwen3-TTS" in model_id and "-Base" in model_id
+
+
+def _is_optimized_runner(runner_mode: str) -> bool:
+    return runner_mode != "base"
+
+
+def _canonical_custom_speaker(speaker: str) -> str:
+    normalized = speaker.strip().replace("-", "_").replace(" ", "_").lower()
+    for official_speaker in _CUSTOM_VOICE_SPEAKERS:
+        if official_speaker.lower() == normalized:
+            return official_speaker
+    return speaker
 
 
 def _get_or_create_runner(
@@ -96,14 +250,28 @@ def _get_or_create_runner(
         except Exception as exc:  # noqa: BLE001
             logger.warning("[Qwen3-TTS-Triton] ComfyUI model unload failed: %s", exc)
 
-        runner = create_runner(
-            runner_mode,
-            device=device,
-            model_id=model_id,
-            dtype=dtype,
-            tq_bits=tq_bits,
-        )
-        runner.load_model()
+        _patch_transformers_check_model_inputs()
+        _patch_qwen3_tts_triton_06b_compat()
+        try:
+            runner = create_runner(
+                runner_mode,
+                device=device,
+                model_id=model_id,
+                dtype=dtype,
+                tq_bits=tq_bits,
+            )
+            runner.load_model()
+        except Exception as exc:  # noqa: BLE001
+            if _is_qwen3_tts_06b(model_id) and _is_optimized_runner(runner_mode):
+                raise RuntimeError(
+                    "Qwen3-TTS-Triton: failed to initialize an optimized 0.6B "
+                    f"runner ({runner_mode}, {model_id}). The public "
+                    "qwen3-tts-triton package may still have 1.7B-specific "
+                    "kernel/cache shape assumptions. Use a patched checkout via "
+                    "COMFYUI_QWEN3_TTS_TRITON_SRC, or switch runner_mode to "
+                    "`base` to verify the model itself."
+                ) from exc
+            raise
         _runner_cache[key] = runner
         return runner
 
@@ -201,6 +369,7 @@ def _clone_ref_audio_input(audio: dict[str, Any]) -> tuple[Any, int]:
 def _run_voice_clone(
     runner: Any,
     *,
+    model_id: str,
     text: str,
     language: str,
     ref_audio: dict[str, Any],
@@ -214,7 +383,7 @@ def _run_voice_clone(
 ) -> dict[str, Any]:
     import torch
 
-    clone_model = runner._load_clone_model()
+    clone_model = _get_voice_clone_model(runner, model_id)
     signature = inspect.signature(clone_model.generate_voice_clone)
     clone_ref_audio = _clone_ref_audio_input(ref_audio)
     kwargs: dict[str, Any] = {}
@@ -279,7 +448,35 @@ def _run_voice_clone(
     }
 
 
-_OPTIONAL_GENERATION_PARAMS = {
+def _get_voice_clone_model(runner: Any, model_id: str) -> Any:
+    """Return the model that should service voice cloning for this runner."""
+    if _is_qwen3_tts_base_model(model_id):
+        # qwen3-tts-triton 0.2.0 hard-codes its lazy clone loader to
+        # Qwen/Qwen3-TTS-12Hz-1.7B-Base. When the runner itself was loaded with
+        # a Base checkpoint, reuse that loaded model so 0.6B stays 0.6B.
+        loaded_tts = getattr(runner, "_tts", None)
+        if loaded_tts is not None and hasattr(loaded_tts, "generate_voice_clone"):
+            return loaded_tts
+
+        loaded_model = getattr(runner, "model", None)
+        if loaded_model is not None and hasattr(loaded_model, "generate_voice_clone"):
+            return loaded_model
+
+        raise RuntimeError(
+            "Qwen3-TTS-Triton: voice clone runner was loaded with a Base "
+            f"checkpoint ({model_id}), but no loaded voice-clone-capable model "
+            "was found on the runner."
+        )
+
+    if hasattr(runner, "_load_clone_model"):
+        return runner._load_clone_model()
+
+    raise RuntimeError(
+        "Qwen3-TTS-Triton: selected runner does not expose a voice clone model."
+    )
+
+
+_OPTIONAL_GENERATION_PARAMS_BASE = {
     "temperature": (
         "FLOAT",
         {"default": 0.9, "min": 0.0, "max": 2.0, "step": 0.05},
@@ -294,11 +491,17 @@ _OPTIONAL_GENERATION_PARAMS = {
         {"default": 2048, "min": 64, "max": 8192, "step": 1},
     ),
     "greedy": ("BOOLEAN", {"default": False}),
-    "model_id": ("STRING", {"default": _DEFAULT_MODEL_ID}),
     "dtype": (_DTYPE_CHOICES, {"default": "bf16"}),
     "device": (_DEVICE_CHOICES, {"default": "cuda"}),
     "tq_bits": ("INT", {"default": 4, "min": 3, "max": 4, "step": 1}),
 }
+
+
+def _optional_generation_params(default_model_id: str) -> dict[str, Any]:
+    return {
+        **_OPTIONAL_GENERATION_PARAMS_BASE,
+        "model_id": ("STRING", {"default": default_model_id}),
+    }
 
 
 class Qwen3TTSCustomVoice:
@@ -317,11 +520,11 @@ class Qwen3TTSCustomVoice:
                 ),
                 "runner_mode": (ALL_RUNNER_NAMES, {"default": "hybrid"}),
                 "language": (_LANGUAGE_CHOICES, {"default": "english"}),
-                "speaker": ("STRING", {"default": "vivian"}),
+                "speaker": (_CUSTOM_VOICE_SPEAKERS, {"default": "Vivian"}),
             },
             "optional": {
                 "instruct": ("STRING", {"multiline": True, "default": ""}),
-                **_OPTIONAL_GENERATION_PARAMS,
+                **_optional_generation_params(_DEFAULT_CUSTOM_MODEL_ID),
             },
         }
 
@@ -340,14 +543,14 @@ class Qwen3TTSCustomVoice:
         text: str,
         runner_mode: str,
         language: str = "english",
-        speaker: str = "vivian",
+        speaker: str = "Vivian",
         instruct: str = "",
         temperature: float = 0.9,
         top_k: int = 50,
         repetition_penalty: float = 1.05,
         max_new_tokens: int = 2048,
         greedy: bool = False,
-        model_id: str = _DEFAULT_MODEL_ID,
+        model_id: str = _DEFAULT_CUSTOM_MODEL_ID,
         dtype: str = "bf16",
         device: str = "cuda",
         tq_bits: int = 4,
@@ -359,7 +562,7 @@ class Qwen3TTSCustomVoice:
         result = runner.generate(
             text=text,
             language=language,
-            speaker=speaker,
+            speaker=_canonical_custom_speaker(speaker),
             instruct=instruct or None,
             temperature=temperature,
             top_k=top_k,
@@ -399,7 +602,7 @@ class Qwen3TTSVoiceClone:
             "optional": {
                 "ref_text": ("STRING", {"multiline": True, "default": ""}),
                 "xvec_only": ("BOOLEAN", {"default": True}),
-                **_OPTIONAL_GENERATION_PARAMS,
+                **_optional_generation_params(_DEFAULT_CLONE_MODEL_ID),
             },
         }
 
@@ -426,7 +629,7 @@ class Qwen3TTSVoiceClone:
         repetition_penalty: float = 1.05,
         max_new_tokens: int = 2048,
         greedy: bool = False,
-        model_id: str = _DEFAULT_MODEL_ID,
+        model_id: str = _DEFAULT_CLONE_MODEL_ID,
         dtype: str = "bf16",
         device: str = "cuda",
         tq_bits: int = 4,
@@ -437,6 +640,7 @@ class Qwen3TTSVoiceClone:
         runner = _get_or_create_runner(runner_mode, model_id, dtype, device, tq_bits)
         result = _run_voice_clone(
             runner,
+            model_id=model_id,
             text=text,
             language=language,
             ref_audio=ref_audio,
